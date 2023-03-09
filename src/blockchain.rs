@@ -28,27 +28,21 @@ impl BlockChain {
         let value_in: u64 = transaction
             .inputs
             .iter()
-            .map(|i| self.outputs[&i.outpoint].value)
+            .map(|outpoint| self.outputs[&outpoint].value)
             .sum();
         let value_out: u64 = transaction.outputs.iter().map(|o| o.value).sum();
         if value_out > value_in {
             return Err("value out > value in".into());
         }
-        for input in &transaction.inputs {
-            if self.is_spent(&input.outpoint) {
+        for (outpoint, signature) in transaction.inputs.iter().zip(transaction.signatures.iter()) {
+            if self.is_spent(&outpoint) {
                 return Err("output spent".into());
             }
-            if let Some(spent_output) = self.outputs.get(&input.outpoint) {
-                let address: Address = input.public_key.into();
-                if spent_output.address != address {
+            if let Some(spent_output) = self.outputs.get(&outpoint) {
+                if spent_output.address != signature.get_address() {
                     return Err("addresses don't match".into());
                 }
-                let inputless_hash = hash(&transaction.without_inputs());
-                if input
-                    .public_key
-                    .verify(&inputless_hash, &input.signature)
-                    .is_err()
-                {
+                if !signature.is_valid(transaction) {
                     return Err("wrong signature".into());
                 }
             } else {
@@ -78,8 +72,8 @@ impl BlockChain {
         for tx in &body.transactions {
             let txid = tx.txid();
             self.transactions.insert(txid, tx.clone());
-            for input in &tx.inputs {
-                self.unspent_outpoints.remove(&input.outpoint);
+            for outpoint in &tx.inputs {
+                self.unspent_outpoints.remove(outpoint);
             }
             for (vout, output) in tx.outputs.iter().enumerate() {
                 let vout = vout as u32;
@@ -97,8 +91,8 @@ impl BlockChain {
     pub fn disconnect_blocks(&mut self, header: &Header, body: &Body) {
         for tx in &body.transactions {
             let txid = tx.txid();
-            for input in &tx.inputs {
-                self.unspent_outpoints.insert(input.outpoint.clone());
+            for outpoint in &tx.inputs {
+                self.unspent_outpoints.insert(outpoint.clone());
             }
             for vout in 0..tx.outputs.len() {
                 let vout = vout as u32;
@@ -122,7 +116,7 @@ impl BlockChain {
         let spent: u64 = transaction
             .inputs
             .iter()
-            .map(|i| self.outputs[&i.outpoint].value)
+            .map(|outpoint| self.outputs[outpoint].value)
             .sum();
         let regular_out: u64 = transaction.outputs.iter().map(|o| o.value).sum();
         let withdrawal_out: u64 = transaction

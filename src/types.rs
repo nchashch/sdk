@@ -1,4 +1,4 @@
-use ed25519_dalek::{PublicKey, Signature};
+use ed25519_dalek::{Signer, Verifier};
 use sha2::Digest;
 
 pub const THIS_SIDECHAIN: usize = 0;
@@ -57,6 +57,12 @@ impl From<Hash> for Txid {
     }
 }
 
+impl From<Txid> for Hash {
+    fn from(other: Txid) -> Self {
+        other.0
+    }
+}
+
 impl std::fmt::Display for Txid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0))
@@ -104,8 +110,8 @@ impl std::fmt::Debug for Address {
     }
 }
 
-impl From<PublicKey> for Address {
-    fn from(other: PublicKey) -> Self {
+impl From<ed25519_dalek::PublicKey> for Address {
+    fn from(other: ed25519_dalek::PublicKey) -> Self {
         Self(hash(&other.to_bytes()))
     }
 }
@@ -122,7 +128,7 @@ impl std::str::FromStr for Address {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OutPoint {
     Regular { txid: Txid, vout: u32 },
     Coinbase { block_hash: BlockHash, vout: u32 },
@@ -130,11 +136,29 @@ pub enum OutPoint {
     Deposit(bitcoin::OutPoint),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Input {
-    pub outpoint: OutPoint,
-    pub public_key: PublicKey,
-    pub signature: Signature,
+#[derive(PartialEq, Eq, Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Signature {
+    public_key: ed25519_dalek::PublicKey,
+    signature: ed25519_dalek::Signature,
+}
+
+impl Signature {
+    pub fn new(keypair: &ed25519_dalek::Keypair, transaction: &Transaction) -> Self {
+        let hash: Hash = transaction.txid().into();
+        Self {
+            signature: keypair.sign(&hash),
+            public_key: keypair.public,
+        }
+    }
+
+    pub fn is_valid(&self, transaction: &Transaction) -> bool {
+        let hash: Hash = transaction.without_signatures().txid().into();
+        self.public_key.verify(&hash, &self.signature).is_ok()
+    }
+
+    pub fn get_address(&self) -> Address {
+        self.public_key.into()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -173,17 +197,17 @@ pub struct WithdrawalOutput {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Transaction {
-    pub inputs: Vec<Input>,
+    pub inputs: Vec<OutPoint>,
+    pub signatures: Vec<Signature>,
     pub outputs: Vec<Output>,
     pub withdrawal_outputs: Vec<WithdrawalOutput>,
 }
 
 impl Transaction {
-    pub fn without_inputs(&self) -> Transaction {
+    pub fn without_signatures(&self) -> Transaction {
         Transaction {
-            inputs: vec![],
-            outputs: self.outputs.clone(),
-            withdrawal_outputs: self.withdrawal_outputs.clone(),
+            signatures: vec![],
+            ..self.clone()
         }
     }
 

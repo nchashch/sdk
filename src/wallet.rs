@@ -1,6 +1,6 @@
 use crate::types::*;
 use anyhow::Result;
-use ed25519_dalek::{Keypair, Signature, Signer};
+use ed25519_dalek::{Keypair, Signer};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -31,34 +31,32 @@ impl Wallet {
             let change = self.create_output(coins.change - fee);
             outputs.push(change);
         }
-        let inputless_transaction = Transaction {
-            inputs: vec![],
-            outputs: outputs.clone(),
-            withdrawal_outputs: vec![],
-        };
-        let inputless_hash = hash(&inputless_transaction);
-        let inputs: Vec<Input> = coins
-            .outputs
-            .iter()
-            .map(|(outpoint, output)| {
-                let keypair = &self.keypairs[&output.address];
-                let signature = keypair.sign(&inputless_hash);
-                Input {
-                    outpoint: outpoint.clone(),
-                    public_key: keypair.public,
-                    signature,
-                }
-            })
-            .collect();
+        let inputs: Vec<OutPoint> = coins.outputs.keys().copied().collect();
         let transaction = Transaction {
             inputs,
+            signatures: vec![],
             outputs,
             withdrawal_outputs: vec![],
         };
-        let txid = transaction.txid();
+        let signatures = transaction
+            .inputs
+            .iter()
+            .map(|i| {
+                let address = coins.outputs[i].address;
+                let keypair = &self.keypairs[&address];
+                Signature::new(keypair, &transaction)
+            })
+            .collect();
+        let transaction = Transaction {
+            signatures,
+            ..transaction
+        };
         for (vout, output) in transaction.outputs.iter().enumerate() {
             let vout = vout as u32;
-            let outpoint = OutPoint::Regular { txid, vout };
+            let outpoint = OutPoint::Regular {
+                txid: transaction.txid(),
+                vout,
+            };
         }
         Some(transaction)
     }
@@ -93,10 +91,6 @@ impl Wallet {
         }
         let change = total - value;
         Some(Coins { outputs, change })
-    }
-
-    fn sign(&self, address: &Address, data: &[u8]) -> Signature {
-        self.keypairs[address].sign(data)
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
