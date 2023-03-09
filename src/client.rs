@@ -1,4 +1,4 @@
-use crate::main_state::{Deposit, DepositsChunk};
+use crate::main_state::{Deposit, DepositsChunk, Output};
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::util::psbt::serialize::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,19 +17,18 @@ pub struct VerifiedBMM {
 }
 
 impl Client {
-    pub fn get_deposits(
-        &self,
-        last_deposit: Option<bitcoin::OutPoint>,
-    ) -> Result<DepositsChunk, Error> {
-        let outpoint = match last_deposit {
-            Some(outpoint) => vec![json!(outpoint.txid), json!(outpoint.vout)],
-            None => vec![],
+    pub fn get_deposits(&self, last_deposit: Option<Deposit>) -> Result<DepositsChunk, Error> {
+        let (outpoint, mut prev_value) = match last_deposit {
+            Some(Deposit { outpoint, total }) => {
+                (vec![json!(outpoint.txid), json!(outpoint.vout)], total)
+            }
+            None => (vec![], 0),
         };
         let params = &[vec![self.this_sidechain.into()], outpoint].concat();
         let json_deposits = self
             .client
             .send_request::<Vec<JsonDeposit>>("listsidechaindeposits", params)?;
-        let mut deposits = HashMap::new();
+        let mut outputs = HashMap::new();
         let mut outpoint_to_tx = HashMap::new();
         for deposit in json_deposits.iter().cloned().rev() {
             let tx = hex::decode(deposit.txhex)?;
@@ -38,29 +37,33 @@ impl Client {
                 txid: tx.txid(),
                 vout: deposit.nburnindex as u32,
             };
-            let deposit = crate::main_state::Deposit {
-                address: deposit.strdest,
-                amount: tx.output[outpoint.vout as usize].value,
+            let value = tx.output[outpoint.vout as usize].value;
+            if value < prev_value {
+                continue;
+            }
+            let output = crate::main_state::Output {
+                address: deposit.strdest.parse()?,
+                value: value - prev_value,
             };
+            prev_value = value;
             outpoint_to_tx.insert(outpoint, tx);
-            deposits.insert(outpoint, deposit);
+            outputs.insert(outpoint, output);
         }
-        let deposits_order = sort_deposits(&outpoint_to_tx);
-        Ok(DepositsChunk {
-            deposits,
-            deposits_order,
-        })
+        let deposits = sort_deposits(&outpoint_to_tx);
+        Ok(DepositsChunk { outputs, deposits })
     }
 }
 
 #[derive(thiserror::Error, Debug)]
-enum Error {
+pub enum Error {
     #[error("ureq error")]
     Ureq(#[from] ureq_jsonrpc::Error),
     #[error("failed to decode hex value")]
     Hex(#[from] hex::FromHexError),
     #[error("bitcoin encoding error")]
     BitcoinEncode(#[from] bitcoin::consensus::encode::Error),
+    #[error("bs58 decode errro")]
+    Bs58Decode(#[from] bs58::decode::Error),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -85,9 +88,7 @@ pub struct DepositOutpoint {
     index: usize,
 }
 
-fn sort_deposits(
-    deposits: &HashMap<bitcoin::OutPoint, bitcoin::Transaction>,
-) -> Vec<bitcoin::OutPoint> {
+fn sort_deposits(deposits: &HashMap<bitcoin::OutPoint, bitcoin::Transaction>) -> Vec<Deposit> {
     if deposits.is_empty() {
         return vec![];
     }
@@ -102,13 +103,22 @@ fn sort_deposits(
             }
         }
         if !spent {
-            sorted_deposits.push(*outpoint);
+            let total = tx.output[outpoint.vout as usize].value;
+            sorted_deposits.push(Deposit {
+                outpoint: outpoint.clone(),
+                total,
+            });
         }
     }
-    let mut outpoint = sorted_deposits[0];
+    let mut outpoint = sorted_deposits[0].outpoint;
     while let Some(next) = spent_by.get(&outpoint) {
         if deposits.contains_key(next) {
-            sorted_deposits.push(*next);
+            let tx = &deposits[next];
+            let total = tx.output[next.vout as usize].value;
+            sorted_deposits.push(Deposit {
+                outpoint: next.clone(),
+                total,
+            });
             outpoint = *next;
         }
     }
@@ -138,12 +148,7 @@ mod tests {
                 id: "sdk".into(),
             },
         };
-        let address = format_deposit_address(client.this_sidechain, "sdk_address");
-        dbg!(address);
         let deposits = client.get_deposits(None)?;
-        dbg!(&deposits);
-        let last = deposits.deposits_order[1];
-        let deposits = client.get_deposits(Some(last))?;
         dbg!(deposits);
         Ok(())
     }

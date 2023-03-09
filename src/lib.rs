@@ -1,3 +1,4 @@
+mod types;
 mod client;
 mod main_state;
 

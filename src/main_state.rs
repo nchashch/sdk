@@ -1,3 +1,4 @@
+pub use crate::types::Output;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -9,23 +10,23 @@ pub struct WithdrawalOutpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Withdrawal {
-    pub amount: u64,
+    pub value: u64,
     pub fee: u64,
     pub main_address: bitcoin::Address,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Deposit {
-    pub address: String,
-    pub amount: u64,
+    pub outpoint: bitcoin::OutPoint,
+    pub total: u64,
 }
 
 // Two Way Peg State
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct TwoWayPegState {
     // These two are never touched by sidechain code.
-    deposits: HashMap<bitcoin::OutPoint, Deposit>,
-    deposits_order: Vec<bitcoin::OutPoint>,
+    outputs: HashMap<bitcoin::OutPoint, Output>,
+    deposits: Vec<Deposit>,
 
     unspent_deposit_outputs: HashSet<bitcoin::OutPoint>,
 
@@ -41,20 +42,20 @@ pub struct TwoWayPegChunk {
 
 #[derive(Debug)]
 pub struct DepositsChunk {
-    pub deposits: HashMap<bitcoin::OutPoint, Deposit>,
-    pub deposits_order: Vec<bitcoin::OutPoint>,
+    pub outputs: HashMap<bitcoin::OutPoint, Output>,
+    pub deposits: Vec<Deposit>,
 }
 
 impl TwoWayPegState {
     fn connect_deposits(&mut self, chunk: DepositsChunk) {
+        self.outputs.extend(chunk.outputs);
         self.deposits.extend(chunk.deposits);
-        self.deposits_order.extend(chunk.deposits_order);
     }
 
     fn disconnect_deposits(&mut self, chunk: DepositsChunk) {
-        for deposit in chunk.deposits_order {
-            self.deposits.remove(&deposit);
-            self.deposits_order.pop();
+        for deposit in chunk.deposits {
+            self.outputs.remove(&deposit.outpoint);
+            self.deposits.pop();
         }
     }
 
