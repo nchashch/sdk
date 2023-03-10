@@ -1,21 +1,22 @@
 use crate::types::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct BlockChain {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlockChain<S, O> {
     block_order: Vec<BlockHash>,
     headers: HashMap<BlockHash, Header>,
-    bodies: HashMap<BlockHash, Body>,
-    transactions: HashMap<Txid, Transaction>,
+    bodies: HashMap<BlockHash, Body<S, O>>,
+    transactions: HashMap<Txid, Transaction<S, O>>,
 
-    pub outputs: HashMap<OutPoint, Output>,
+    pub outputs: HashMap<OutPoint, O>,
     pub deposit_outputs: HashMap<OutPoint, DepositOutput>,
     deposits: Vec<Deposit>,
     pub withdrawal_outputs: HashMap<OutPoint, WithdrawalOutput>,
     pub unspent_outpoints: HashSet<OutPoint>,
 }
 
-impl BlockChain {
+impl<S: Sig + Serialize + Clone, O: Out + Serialize + Clone> BlockChain<S, O> {
     pub fn new() -> Self {
         BlockChain {
             block_order: vec![],
@@ -41,9 +42,9 @@ impl BlockChain {
         self.deposits.extend(deposits_chunk.deposits);
     }
 
-    pub fn validate_transaction(&self, transaction: &Transaction) -> Result<(), String> {
+    pub fn validate_transaction(&self, transaction: &Transaction<S, O>) -> Result<(), String> {
         let (inputs, deposit_inputs, withdrawal_inputs) = self.get_inputs(transaction);
-        if Output::validate(
+        if O::validate(
             &inputs,
             &deposit_inputs,
             &withdrawal_inputs,
@@ -79,7 +80,7 @@ impl BlockChain {
         Ok(())
     }
 
-    pub fn validate_block(&self, header: &Header, body: &Body) -> bool {
+    pub fn validate_block(&self, header: &Header, body: &Body<S, O>) -> bool {
         let best_block = self
             .get_best_block_hash()
             .unwrap_or_else(|| Hash::default().into());
@@ -97,7 +98,7 @@ impl BlockChain {
         true
     }
 
-    pub fn connect_block(&mut self, header: &Header, body: &Body) {
+    pub fn connect_block(&mut self, header: &Header, body: &Body<S, O>) {
         for tx in &body.transactions {
             let txid = tx.txid();
             self.transactions.insert(txid, tx.clone());
@@ -123,7 +124,7 @@ impl BlockChain {
         }
     }
 
-    pub fn disconnect_block(&mut self, header: &Header, body: &Body) {
+    pub fn disconnect_block(&mut self, header: &Header, body: &Body<S, O>) {
         for tx in &body.transactions {
             let txid = tx.txid();
             for outpoint in &tx.inputs {
@@ -153,9 +154,9 @@ impl BlockChain {
         self.block_order.last().copied()
     }
 
-    pub fn get_fee(&self, transaction: &Transaction) -> u64 {
+    pub fn get_fee(&self, transaction: &Transaction<S, O>) -> u64 {
         let (inputs, deposit_inputs, withdrawal_inputs) = self.get_inputs(transaction);
-        Output::get_fee(
+        O::get_fee(
             &inputs,
             &deposit_inputs,
             &withdrawal_inputs,
@@ -166,9 +167,9 @@ impl BlockChain {
 
     fn get_inputs(
         &self,
-        transaction: &Transaction,
-    ) -> (Vec<Output>, Vec<DepositOutput>, Vec<WithdrawalOutput>) {
-        let inputs: Vec<Output> = transaction
+        transaction: &Transaction<S, O>,
+    ) -> (Vec<O>, Vec<DepositOutput>, Vec<WithdrawalOutput>) {
+        let inputs: Vec<O> = transaction
             .inputs
             .iter()
             .filter(|outpoint| self.outputs.contains_key(outpoint))

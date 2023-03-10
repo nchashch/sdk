@@ -1,4 +1,5 @@
 use crate::types::*;
+use crate::concrete::*;
 use anyhow::Result;
 use ed25519_dalek::Keypair;
 use std::collections::{BTreeMap, HashMap};
@@ -21,7 +22,7 @@ impl Wallet {
         &mut self,
         mut outputs: Vec<Output>,
         fee: u64,
-    ) -> Option<Transaction> {
+    ) -> Option<Transaction<Signature, Output>> {
         let amount: u64 = outputs.iter().map(|o| o.value).sum();
         let coins = match self.select_coins(amount) {
             Some(coins) => coins,

@@ -3,6 +3,7 @@ mod client;
 mod mempool;
 mod types;
 mod wallet;
+mod concrete;
 
 use blockchain::*;
 use client::Client;
@@ -38,7 +39,7 @@ fn main() -> Result<()> {
     let output = wallet.create_output(100);
     let transaction = wallet.create_transaction(vec![output], 1).unwrap();
     let fee = blockchain.get_fee(&transaction);
-    mempool.insert(fee, transaction.clone());
+    mempool.insert(fee, transaction);
     let body = mempool.create_body(wallet.generate_address(), 1);
     let header = Header::new(&Hash::default().into(), &body);
     dbg!(blockchain.validate_block(&header, &body));
