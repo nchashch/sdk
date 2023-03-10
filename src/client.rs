@@ -1,6 +1,6 @@
-use crate::main_state::{Deposit, DepositsChunk, Output};
+use crate::types::{Deposit, DepositOutput, DepositsChunk, OutPoint};
 use bitcoin::blockdata::transaction::Transaction;
-use bitcoin::util::psbt::serialize::{Deserialize, Serialize};
+use bitcoin::util::psbt::serialize::Deserialize;
 use std::collections::HashMap;
 use ureq_jsonrpc::json;
 
@@ -33,20 +33,22 @@ impl Client {
         for deposit in json_deposits.iter().cloned().rev() {
             let tx = hex::decode(deposit.txhex)?;
             let tx = Transaction::deserialize(tx.as_slice())?;
-            let outpoint = bitcoin::OutPoint {
+            let outpoint = OutPoint::Deposit(bitcoin::OutPoint {
                 txid: tx.txid(),
                 vout: deposit.nburnindex as u32,
-            };
-            let value = tx.output[outpoint.vout as usize].value;
+            });
+            let value = tx.output[deposit.nburnindex].value;
             if value < prev_value {
                 continue;
             }
-            let output = crate::main_state::Output {
+            let output = DepositOutput {
                 address: deposit.strdest.parse()?,
                 value: value - prev_value,
             };
             prev_value = value;
-            outpoint_to_tx.insert(outpoint, tx);
+            if let OutPoint::Deposit(outpoint) = outpoint {
+                outpoint_to_tx.insert(outpoint, tx);
+            }
             outputs.insert(outpoint, output);
         }
         let deposits = sort_deposits(&outpoint_to_tx);

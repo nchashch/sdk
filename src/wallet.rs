@@ -1,6 +1,6 @@
 use crate::types::*;
 use anyhow::Result;
-use ed25519_dalek::{Keypair, Signer};
+use ed25519_dalek::Keypair;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -51,13 +51,6 @@ impl Wallet {
             signatures,
             ..transaction
         };
-        for (vout, output) in transaction.outputs.iter().enumerate() {
-            let vout = vout as u32;
-            let outpoint = OutPoint::Regular {
-                txid: transaction.txid(),
-                vout,
-            };
-        }
         Some(transaction)
     }
 
@@ -100,7 +93,7 @@ impl Wallet {
     }
 
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Wallet> {
-        let mut file = std::fs::File::open(path)?;
+        let file = std::fs::File::open(path)?;
         let mut reader = std::io::BufReader::new(file);
         let mut buffer = Vec::new();
         // Read file into vector.

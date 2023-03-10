@@ -1,5 +1,6 @@
 use ed25519_dalek::{Signer, Verifier};
 use sha2::Digest;
+use std::collections::HashMap;
 
 pub const THIS_SIDECHAIN: usize = 0;
 
@@ -93,7 +94,7 @@ impl Address {
 
 fn format_deposit_address(sidechain_number: usize, address: &str) -> String {
     let deposit_address: String = format!("s{}_{}_", sidechain_number, address);
-    let hash = sha256::digest(deposit_address.as_bytes()).to_string();
+    let hash = sha256::digest(deposit_address.as_bytes());
     let hash: String = hash[..6].into();
     format!("{}{}", deposit_address, hash)
 }
@@ -150,21 +151,88 @@ impl Signature {
             public_key: keypair.public,
         }
     }
+}
 
-    pub fn is_valid(&self, transaction: &Transaction) -> bool {
-        let hash: Hash = transaction.without_signatures().txid().into();
+impl Sig for Signature {
+    fn is_valid(&self, txid_without_signatures: Txid) -> bool {
+        let hash: Hash = txid_without_signatures.into();
         self.public_key.verify(&hash, &self.signature).is_ok()
     }
 
-    pub fn get_address(&self) -> Address {
+    fn get_address(&self) -> Address {
         self.public_key.into()
     }
+}
+
+pub trait Sig {
+    fn is_valid(&self, txid_without_signatures: Txid) -> bool;
+    fn get_address(&self) -> Address;
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DepositOutput {
+    pub address: Address,
+    pub value: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Output {
     pub address: Address,
     pub value: u64,
+}
+
+impl Out for Output {
+    fn validate(
+        inputs: &[Self],
+        deposit_inputs: &[DepositOutput],
+        withdrawal_inputs: &[WithdrawalOutput],
+        outputs: &[Self],
+        withdrawal_outputs: &[WithdrawalOutput],
+    ) -> bool {
+        let regular_in: u64 = inputs.iter().map(|i| i.value).sum();
+        let deposit_in: u64 = deposit_inputs.iter().map(|i| i.value).sum();
+        let refund_in: u64 = withdrawal_inputs.iter().map(|i| i.value).sum();
+
+        let regular_out: u64 = outputs.iter().map(|o| o.value).sum();
+        let withdrawal_out: u64 = withdrawal_outputs.iter().map(|o| o.value).sum();
+        regular_out + withdrawal_out > regular_in + deposit_in + refund_in
+    }
+    fn get_fee(
+        inputs: &[Self],
+        deposit_inputs: &[DepositOutput],
+        withdrawal_inputs: &[WithdrawalOutput],
+        outputs: &[Self],
+        withdrawal_outputs: &[WithdrawalOutput],
+    ) -> u64 {
+        let regular_in: u64 = inputs.iter().map(|i| i.value).sum();
+        let deposit_in: u64 = deposit_inputs.iter().map(|i| i.value).sum();
+        let withdrawal_in: u64 = withdrawal_inputs.iter().map(|i| i.value).sum();
+
+        let regular_out: u64 = outputs.iter().map(|o| o.value).sum();
+        let withdrawal_out: u64 = withdrawal_outputs.iter().map(|wo| wo.value).sum();
+        (regular_in + deposit_in + withdrawal_in) - (regular_out + withdrawal_out)
+    }
+    fn get_address(&self) -> Address {
+        self.address
+    }
+}
+
+pub trait Out: Sized {
+    fn validate(
+        inputs: &[Self],
+        deposit_inputs: &[DepositOutput],
+        withdrawal_inputs: &[WithdrawalOutput],
+        outputs: &[Self],
+        withdrawal_outputs: &[WithdrawalOutput],
+    ) -> bool;
+    fn get_fee(
+        inputs: &[Self],
+        deposit_inputs: &[DepositOutput],
+        withdrawal_inputs: &[WithdrawalOutput],
+        outputs: &[Self],
+        withdrawal_outputs: &[WithdrawalOutput],
+    ) -> u64;
+    fn get_address(&self) -> Address;
 }
 
 impl Ord for Output {
@@ -255,4 +323,16 @@ pub fn hash<T: serde::Serialize>(data: &T) -> Hash {
         bincode::serialize(data).expect("failed to serialize a type to compute a hash");
     hasher.update(data_serialized);
     hasher.finalize().into()
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Deposit {
+    pub outpoint: bitcoin::OutPoint,
+    pub total: u64,
+}
+
+#[derive(Debug)]
+pub struct DepositsChunk {
+    pub outputs: HashMap<OutPoint, DepositOutput>,
+    pub deposits: Vec<Deposit>,
 }

@@ -1,7 +1,5 @@
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer};
 mod blockchain;
 mod client;
-mod main_state;
 mod mempool;
 mod types;
 mod wallet;
@@ -15,9 +13,9 @@ use wallet::*;
 use anyhow::Result;
 
 fn main() -> Result<()> {
-    let mut blockchain = BlockChain::default();
+    let mut blockchain = BlockChain::new();
     let mut mempool = MemPool::default();
-    let mut wallet = Wallet::load("./fake_wallet.dat").unwrap_or(Wallet::default());
+    let mut wallet = Wallet::load("./fake_wallet.dat").unwrap_or_default();
     // for address in wallet.get_addresses() {
     //     dbg!(address.to_deposit_string());
     // }
@@ -32,12 +30,7 @@ fn main() -> Result<()> {
         },
     };
     let deposits = client.get_deposits(None)?;
-    let outputs = deposits
-        .outputs
-        .into_iter()
-        .map(|(outpoint, output)| (OutPoint::Deposit(outpoint), output))
-        .collect();
-    blockchain.add_deposits(outputs);
+    blockchain.add_deposits(deposits);
     wallet.add_outputs(&blockchain.outputs);
     dbg!(&blockchain.outputs);
     dbg!(&wallet.outputs);
